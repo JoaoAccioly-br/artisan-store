@@ -39,8 +39,10 @@ func TestNewRouter_Unit(t *testing.T) {
 	t.Run("GET /healthz returns 200 and request log", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log := logger.NewWithWriter(&logBuf, "production", "info")
-		router := apphttp.NewRouter(newTestConfig(), log, &stubDBPinger{
-			pingFn: func(context.Context) error { return nil },
+		router := apphttp.NewRouter(newTestConfig(), log, apphttp.RouterDeps{
+			DB: &stubDBPinger{
+				pingFn: func(context.Context) error { return nil },
+			},
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -57,7 +59,7 @@ func TestNewRouter_Unit(t *testing.T) {
 	t.Run("GET /healthz with nil db returns 503", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log := logger.NewWithWriter(&logBuf, "production", "info")
-		router := apphttp.NewRouter(newTestConfig(), log, nil)
+		router := apphttp.NewRouter(newTestConfig(), log, apphttp.RouterDeps{})
 
 		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 		rec := httptest.NewRecorder()
@@ -72,7 +74,7 @@ func TestNewRouter_Unit(t *testing.T) {
 	t.Run("POST /healthz returns 405 Method Not Allowed", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log := logger.NewWithWriter(&logBuf, "production", "info")
-		router := apphttp.NewRouter(newTestConfig(), log, nil)
+		router := apphttp.NewRouter(newTestConfig(), log, apphttp.RouterDeps{})
 
 		req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 		rec := httptest.NewRecorder()
@@ -89,7 +91,7 @@ func TestNewRouter_Unit(t *testing.T) {
 	t.Run("unknown route returns 404 Not Found", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log := logger.NewWithWriter(&logBuf, "production", "info")
-		router := apphttp.NewRouter(newTestConfig(), log, nil)
+		router := apphttp.NewRouter(newTestConfig(), log, apphttp.RouterDeps{})
 
 		req := httptest.NewRequest(http.MethodGet, "/unknown", nil)
 		rec := httptest.NewRecorder()
@@ -104,9 +106,11 @@ func TestNewRouter_Unit(t *testing.T) {
 	t.Run("panic inside handler is recovered with 500 JSON", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log := logger.NewWithWriter(&logBuf, "production", "info")
-		router := apphttp.NewRouter(newTestConfig(), log, &stubDBPinger{
-			pingFn: func(context.Context) error {
-				panic("unexpected db driver panic")
+		router := apphttp.NewRouter(newTestConfig(), log, apphttp.RouterDeps{
+			DB: &stubDBPinger{
+				pingFn: func(context.Context) error {
+					panic("unexpected db driver panic")
+				},
 			},
 		})
 
@@ -126,7 +130,7 @@ func TestNewRouter_Unit(t *testing.T) {
 	t.Run("CORS preflight OPTIONS on /healthz succeeds", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log := logger.NewWithWriter(&logBuf, "production", "info")
-		router := apphttp.NewRouter(newTestConfig(), log, nil)
+		router := apphttp.NewRouter(newTestConfig(), log, apphttp.RouterDeps{})
 
 		req := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
 		req.Header.Set("Origin", "http://localhost:3000")

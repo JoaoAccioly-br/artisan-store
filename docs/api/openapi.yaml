@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Doceria API
-  version: 0.1.0
+  title: Artisan StoreArtisan Store API
+  version: 0.22.0
   description: >
-    API central do sistema de doceria (atende o app desktop Wails e a loja online Nuxt).
+    API central do sistema de gestão e vendasgestão e vendas (atende o app desktop Wails e a loja online Nuxt).
     Contrato mantido em abordagem Spec-First desde a Fase 0.
   contact:
     name: João Accioly
@@ -18,6 +18,10 @@ servers:
 tags:
   - name: System
     description: Healthcheck e status da aplicação
+  - name: Admin Auth
+    description: Autenticação de funcionários (JWT access + refresh rotativo)
+  - name: Admin Users
+    description: Gestão de usuários e funcionários (apenas administradores)
 
 paths:
   /healthz:
@@ -36,6 +40,322 @@ paths:
                 $ref: "#/components/schemas/HealthResponse"
         "503":
           description: API indisponível (dependência crítica fora do ar)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/auth/login:
+    post:
+      tags:
+        - Admin Auth
+      summary: Autentica funcionário e emite par de tokens (access + refresh)
+      operationId: adminLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Autenticado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Payload inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Credenciais inválidas ou usuário inativo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/auth/refresh:
+    post:
+      tags:
+        - Admin Auth
+      summary: Renova o par de tokens rotacionando o refresh token usado
+      operationId: adminRefreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          description: Tokens renovados com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshTokenResponse"
+        "400":
+          description: Payload inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Refresh token inválido, expirado ou revogado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/auth/logout:
+    post:
+      tags:
+        - Admin Auth
+      summary: Encerra sessão revogando o refresh token
+      operationId: adminLogout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "204":
+          description: Logout realizado com sucesso
+        "400":
+          description: Payload inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/auth/me:
+    get:
+      tags:
+        - Admin Auth
+      summary: Retorna dados do funcionário autenticado
+      operationId: adminGetMe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dados do funcionário autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/users:
+    get:
+      tags:
+        - Admin Users
+      summary: Lista funcionários cadastrados com paginação
+      operationId: adminListUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Número da página (iniciando em 1)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          description: Itens por página
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: role
+          in: query
+          description: Filtrar por papel
+          required: false
+          schema:
+            $ref: "#/components/schemas/UserRole"
+      responses:
+        "200":
+          description: Lista paginada de usuários
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedUsersResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Admin Users
+      summary: Cadastra novo funcionário
+      operationId: adminCreateUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: Usuário criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Dados de entrada inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: E-mail já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/users/{id}:
+    get:
+      tags:
+        - Admin Users
+      summary: Busca funcionário por ID
+      operationId: adminGetUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do usuário (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Detalhes do usuário
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Usuário não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - Admin Users
+      summary: Atualiza dados cadastrais, papel, status ou senha de funcionário
+      operationId: adminUpdateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do usuário (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Usuário atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Dados de entrada inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Usuário não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Conflito (e-mail já em uso por outro usuário)
           content:
             application/json:
               schema:
@@ -68,6 +388,184 @@ components:
           type: string
           format: date-time
           example: "2026-11-15T03:00:00Z"
+
+    UserRole:
+      type: string
+      enum: [admin, atendente, cozinha, entregador]
+      example: admin
+
+    UserResponse:
+      type: object
+      required:
+        - id
+        - name
+        - email
+        - role
+        - active
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "0193309a-9e84-7654-8fe4-99dc0f612345"
+        name:
+          type: string
+          example: "Maria Confeiteira"
+        email:
+          type: string
+          format: email
+          example: "maria@doceria.com"
+        role:
+          $ref: "#/components/schemas/UserRole"
+        active:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-11-15T10:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-11-15T10:00:00Z"
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "admin@doceria.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "SenhaForte#123"
+
+    LoginResponse:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+        - user
+      properties:
+        access_token:
+          type: string
+          description: JWT de acesso de curta duração (15 minutos)
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: Token opaco de renovação de longa duração (7 dias)
+          example: "rt_0193309a-9e84-7654-8fe4-99dc0f612345..."
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          description: Tempo de vida do access token em segundos (ex. 900)
+          example: 900
+        user:
+          $ref: "#/components/schemas/UserResponse"
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          example: "rt_0193309a-9e84-7654-8fe4-99dc0f612345..."
+
+    RefreshTokenResponse:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          example: "rt_new_0193309a-9e84-7654-8fe4-99dc0f612345..."
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          example: 900
+
+    LogoutRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          example: "rt_0193309a-9e84-7654-8fe4-99dc0f612345..."
+
+    CreateUserRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - role
+      properties:
+        name:
+          type: string
+          minLength: 2
+          example: "Carlos Atendente"
+        email:
+          type: string
+          format: email
+          example: "carlos@doceria.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "SenhaForte#123"
+        role:
+          $ref: "#/components/schemas/UserRole"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          example: "Carlos Silva"
+        role:
+          $ref: "#/components/schemas/UserRole"
+        active:
+          type: boolean
+          example: true
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "NovaSenhaForte#123"
+
+    PaginatedUsersResponse:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
 
     PaginationMeta:
       type: object

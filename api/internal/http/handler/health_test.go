@@ -27,10 +27,12 @@ func (s *stubPinger) Ping(ctx context.Context) error {
 
 func TestServer_GetHealthz_Success(t *testing.T) {
 	var receivedDeadline bool
-	srv := handler.NewServer(&stubPinger{
-		pingFn: func(ctx context.Context) error {
-			_, receivedDeadline = ctx.Deadline()
-			return nil
+	srv := handler.NewServer(handler.ServerDeps{
+		DB: &stubPinger{
+			pingFn: func(ctx context.Context) error {
+				_, receivedDeadline = ctx.Deadline()
+				return nil
+			},
 		},
 	})
 
@@ -59,7 +61,7 @@ func TestServer_GetHealthz_Success(t *testing.T) {
 }
 
 func TestServer_GetHealthz_NilDB(t *testing.T) {
-	srv := handler.NewServer(nil)
+	srv := handler.NewServer(handler.ServerDeps{})
 
 	resp, err := srv.GetHealthz(context.Background(), oapi.GetHealthzRequestObject{})
 	require.NoError(t, err)
@@ -82,9 +84,11 @@ func TestServer_GetHealthz_NilDB(t *testing.T) {
 
 func TestServer_GetHealthz_PingFailureAndCanceledContext(t *testing.T) {
 	t.Run("ping returns error", func(t *testing.T) {
-		srv := handler.NewServer(&stubPinger{
-			pingFn: func(context.Context) error {
-				return errors.New("connection reset by peer")
+		srv := handler.NewServer(handler.ServerDeps{
+			DB: &stubPinger{
+				pingFn: func(context.Context) error {
+					return errors.New("connection reset by peer")
+				},
 			},
 		})
 
@@ -104,9 +108,11 @@ func TestServer_GetHealthz_PingFailureAndCanceledContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		srv := handler.NewServer(&stubPinger{
-			pingFn: func(pingCtx context.Context) error {
-				return pingCtx.Err()
+		srv := handler.NewServer(handler.ServerDeps{
+			DB: &stubPinger{
+				pingFn: func(pingCtx context.Context) error {
+					return pingCtx.Err()
+				},
 			},
 		})
 

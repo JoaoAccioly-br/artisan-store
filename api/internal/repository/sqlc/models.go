@@ -6,10 +6,35 @@ package sqlc
 
 import (
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type RefreshToken struct {
+	ID           uuid.UUID          `json:"id"`
+	UserID       uuid.UUID          `json:"user_id"`
+	FamilyID     uuid.UUID          `json:"family_id"`
+	TokenHash    string             `json:"token_hash"`
+	ExpiresAt    time.Time          `json:"expires_at"`
+	RevokedAt    pgtype.Timestamptz `json:"revoked_at"`
+	ReplacedByID pgtype.UUID        `json:"replaced_by_id"`
+	CreatedAt    time.Time          `json:"created_at"`
+}
 
 type SystemMetadatum struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type User struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	Role         string    `json:"role"`
+	Active       bool      `json:"active"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

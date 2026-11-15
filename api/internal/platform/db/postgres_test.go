@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -15,6 +16,14 @@ import (
 
 	"github.com/joao-accioly/artisan-store/api/internal/platform/db"
 )
+
+func tableExists(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tableName string) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", "public."+tableName).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
 
 func TestNewPool_InvalidURL(t *testing.T) {
 	tests := []struct {
@@ -96,27 +105,35 @@ func TestPostgres_Integration(t *testing.T) {
 
 	require.NoError(t, pool.Ping(ctx))
 
-	// Aplica migrations e valida seed inicial.
+	// Aplica migrations (00001_init e 00002_users) e valida estrutura inicial.
 	require.NoError(t, db.MigrateUp(ctx, pool))
 
 	var value string
 	err = pool.QueryRow(ctx, "SELECT value FROM system_metadata WHERE key = 'schema_initialized'").Scan(&value)
 	require.NoError(t, err)
 	assert.Equal(t, "true", value)
+	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
+	assert.True(t, tableExists(t, ctx, pool, "users"))
+	assert.True(t, tableExists(t, ctx, pool, "refresh_tokens"))
 
 	// Reaplicação idempotente.
 	require.NoError(t, db.MigrateUp(ctx, pool))
 
-	// Reverte migration e valida remoção da tabela.
+	// Primeiro MigrateDown reverte apenas 00002_users.sql.
 	require.NoError(t, db.MigrateDown(ctx, pool))
+	assert.False(t, tableExists(t, ctx, pool, "refresh_tokens"))
+	assert.False(t, tableExists(t, ctx, pool, "users"))
+	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
 
-	var exists bool
-	err = pool.QueryRow(ctx, "SELECT to_regclass('public.system_metadata') IS NOT NULL").Scan(&exists)
-	require.NoError(t, err)
-	assert.False(t, exists)
+	// Segundo MigrateDown reverte 00001_init.sql.
+	require.NoError(t, db.MigrateDown(ctx, pool))
+	assert.False(t, tableExists(t, ctx, pool, "system_metadata"))
 
-	// Sobe novamente para garantir reversibilidade completa.
+	// Sobe novamente para garantir reversibilidade completa de todas as migrations.
 	require.NoError(t, db.MigrateUp(ctx, pool))
+	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
+	assert.True(t, tableExists(t, ctx, pool, "users"))
+	assert.True(t, tableExists(t, ctx, pool, "refresh_tokens"))
 
 	// Pool fechado deve falhar nas operações de migration.
 	pool.Close()

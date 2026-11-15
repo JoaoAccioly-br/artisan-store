@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ func TestLoad_AllDefaults(t *testing.T) {
 		"APP_ENV", "API_HOST", "API_PORT", "LOG_LEVEL", "AUTO_MIGRATE",
 		"CORS_ALLOWED_ORIGINS", "RATE_LIMIT_RPM", "HTTP_READ_TIMEOUT",
 		"HTTP_WRITE_TIMEOUT", "HTTP_IDLE_TIMEOUT",
+		"JWT_ACCESS_SECRET", "JWT_ACCESS_TTL", "JWT_REFRESH_TTL",
+		"SEED_ADMIN_NAME", "SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD",
 	} {
 		unsetEnvForTest(t, k)
 	}
@@ -45,6 +48,12 @@ func TestLoad_AllDefaults(t *testing.T) {
 	assert.Equal(t, 10*time.Second, cfg.ReadTimeout)
 	assert.Equal(t, 30*time.Second, cfg.WriteTimeout)
 	assert.Equal(t, 60*time.Second, cfg.IdleTimeout)
+	assert.Equal(t, "change-me-access-secret-min-32-chars-dev-only", cfg.JWTAccessSecret)
+	assert.Equal(t, 15*time.Minute, cfg.JWTAccessTTL)
+	assert.Equal(t, 168*time.Hour, cfg.JWTRefreshTTL)
+	assert.Equal(t, "Administrador", cfg.SeedAdminName)
+	assert.Empty(t, cfg.SeedAdminEmail)
+	assert.Empty(t, cfg.SeedAdminPassword)
 }
 
 func TestLoad_DefaultsAndOverrides(t *testing.T) {
@@ -60,6 +69,12 @@ func TestLoad_DefaultsAndOverrides(t *testing.T) {
 	t.Setenv("HTTP_READ_TIMEOUT", "15s")
 	t.Setenv("HTTP_WRITE_TIMEOUT", "45s")
 	t.Setenv("HTTP_IDLE_TIMEOUT", "90s")
+	t.Setenv("JWT_ACCESS_SECRET", "prod-super-secret-key-with-more-than-32-chars")
+	t.Setenv("JWT_ACCESS_TTL", "10m")
+	t.Setenv("JWT_REFRESH_TTL", "72h")
+	t.Setenv("SEED_ADMIN_NAME", "Maria Confeiteira")
+	t.Setenv("SEED_ADMIN_EMAIL", "admin@doceria.com")
+	t.Setenv("SEED_ADMIN_PASSWORD", "SenhaForte#123")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -73,6 +88,12 @@ func TestLoad_DefaultsAndOverrides(t *testing.T) {
 	assert.Equal(t, 15*time.Second, cfg.ReadTimeout)
 	assert.Equal(t, 45*time.Second, cfg.WriteTimeout)
 	assert.Equal(t, 90*time.Second, cfg.IdleTimeout)
+	assert.Equal(t, "prod-super-secret-key-with-more-than-32-chars", cfg.JWTAccessSecret)
+	assert.Equal(t, 10*time.Minute, cfg.JWTAccessTTL)
+	assert.Equal(t, 72*time.Hour, cfg.JWTRefreshTTL)
+	assert.Equal(t, "Maria Confeiteira", cfg.SeedAdminName)
+	assert.Equal(t, "admin@doceria.com", cfg.SeedAdminEmail)
+	assert.Equal(t, "SenhaForte#123", cfg.SeedAdminPassword)
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -154,6 +175,95 @@ func TestLoad_RateLimitRPMValidation(t *testing.T) {
 		cfg, err := config.Load()
 		require.NoError(t, err)
 		assert.Equal(t, 1, cfg.RateLimitRPM)
+	})
+}
+
+func TestLoad_JWTSecretValidation(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	t.Run("short secret (< 32 chars) rejected", func(t *testing.T) {
+		for _, secret := range []string{"   ", "short-secret", strings.Repeat("a", 31)} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("APP_ENV", "development")
+			t.Setenv("JWT_ACCESS_SECRET", secret)
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid JWT_ACCESS_SECRET: must be at least 32 characters")
+		}
+	})
+
+	t.Run("exact 32-char secret accepted in production", func(t *testing.T) {
+		secret32 := strings.Repeat("s", 32)
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("JWT_ACCESS_SECRET", secret32)
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, secret32, cfg.JWTAccessSecret)
+	})
+
+	t.Run("default dev secret forbidden in production", func(t *testing.T) {
+		for _, envName := range []string{"production", "PRODUCTION"} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("APP_ENV", envName)
+			unsetEnvForTest(t, "JWT_ACCESS_SECRET")
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "default development secret cannot be used in production")
+		}
+	})
+
+	t.Run("default dev secret accepted in development", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+		t.Setenv("APP_ENV", "development")
+		unsetEnvForTest(t, "JWT_ACCESS_SECRET")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, "change-me-access-secret-min-32-chars-dev-only", cfg.JWTAccessSecret)
+	})
+}
+
+func TestLoad_JWTTTLValidation(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	t.Run("invalid JWT_ACCESS_TTL <= 0", func(t *testing.T) {
+		for _, ttl := range []string{"0s", "-1m"} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("JWT_ACCESS_TTL", ttl)
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid JWT_ACCESS_TTL")
+		}
+	})
+
+	t.Run("invalid JWT_REFRESH_TTL <= 0", func(t *testing.T) {
+		for _, ttl := range []string{"0s", "-1h"} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("JWT_REFRESH_TTL", ttl)
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid JWT_REFRESH_TTL")
+		}
+	})
+
+	t.Run("invalid duration syntax for JWT TTLs", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+		t.Setenv("JWT_ACCESS_TTL", "fifteen-minutes")
+		_, err := config.Load()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parse environment config")
+
+		unsetEnvForTest(t, "JWT_ACCESS_TTL")
+		t.Setenv("JWT_REFRESH_TTL", "seven-days")
+		_, err = config.Load()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parse environment config")
 	})
 }
 

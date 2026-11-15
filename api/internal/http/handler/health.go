@@ -8,21 +8,6 @@ import (
 	"github.com/joao-accioly/artisan-store/api/internal/http/oapi"
 )
 
-// DBPinger abstrai a verificação de conectividade com o banco de dados.
-type DBPinger interface {
-	Ping(ctx context.Context) error
-}
-
-// Server implementa o contrato oapi.StrictServerInterface da API.
-type Server struct {
-	db DBPinger
-}
-
-// NewServer constrói o servidor HTTP com as dependências necessárias.
-func NewServer(db DBPinger) *Server {
-	return &Server{db: db}
-}
-
 // GetHealthz verifica a saúde da API e a conectividade com o PostgreSQL.
 func (s *Server) GetHealthz(ctx context.Context, _ oapi.GetHealthzRequestObject) (oapi.GetHealthzResponseObject, error) {
 	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

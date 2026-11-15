@@ -82,7 +82,7 @@ func TestRouterAndDatabaseIntegration(t *testing.T) {
 		RateLimitRPM:   10,
 	}
 
-	router := apphttp.NewRouter(cfg, log, pool)
+	router := apphttp.NewRouter(cfg, log, apphttp.RouterDeps{DB: pool})
 
 	t.Run("GET /healthz retorna 200 com X-Request-Id e CORS", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -135,7 +135,7 @@ func TestRouterAndDatabaseIntegration(t *testing.T) {
 			AllowedOrigins: []string{"http://localhost:3000"},
 			RateLimitRPM:   2,
 		}
-		limitedRouter := apphttp.NewRouter(cfgStrict, log, pool)
+		limitedRouter := apphttp.NewRouter(cfgStrict, log, apphttp.RouterDeps{DB: pool})
 
 		for i := 0; i < 2; i++ {
 			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

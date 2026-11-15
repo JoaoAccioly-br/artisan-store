@@ -3,6 +3,7 @@ package http
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -12,11 +13,20 @@ import (
 	"github.com/joao-accioly/artisan-store/api/internal/http/middleware"
 	"github.com/joao-accioly/artisan-store/api/internal/http/oapi"
 	"github.com/joao-accioly/artisan-store/api/internal/http/response"
+	"github.com/joao-accioly/artisan-store/api/internal/security"
 )
 
+// RouterDeps agrupa as dependências necessárias para montar o roteador HTTP.
+type RouterDeps struct {
+	DB         handler.DBPinger
+	JWTManager *security.JWTManager
+	Auth       handler.AuthUseCase
+	Users      handler.UserUseCase
+}
+
 // NewRouter monta o roteador principal chi com middlewares globais, tratamento de erros
-// padronizado e handlers gerados a partir do contrato OpenAPI.
-func NewRouter(cfg *config.Config, log *slog.Logger, db handler.DBPinger) http.Handler {
+// padronizado, autenticação/RBAC e handlers gerados a partir do contrato OpenAPI.
+func NewRouter(cfg *config.Config, log *slog.Logger, deps RouterDeps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -36,9 +46,22 @@ func NewRouter(cfg *config.Config, log *slog.Logger, db handler.DBPinger) http.H
 		})
 	})
 
-	srv := handler.NewServer(db)
-	strictHandler := oapi.NewStrictHandlerWithOptions(srv, nil, oapi.StrictHTTPServerOptions{
+	srv := handler.NewServer(handler.ServerDeps{
+		DB:    deps.DB,
+		Auth:  deps.Auth,
+		Users: deps.Users,
+	})
+
+	strictMiddlewares := []oapi.StrictMiddlewareFunc{
+		middleware.NewStrictAuthMiddleware(deps.JWTManager, middleware.DefaultOperationPolicies()),
+	}
+
+	strictHandler := oapi.NewStrictHandlerWithOptions(srv, strictMiddlewares, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
+			if strings.Contains(err.Error(), "decode JSON body") {
+				response.Error(w, log, domain.NewInvalidJSONError(err))
+				return
+			}
 			response.Error(w, log, domain.NewValidationError(err.Error(), nil))
 		},
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {

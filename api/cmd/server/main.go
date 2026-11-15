@@ -14,6 +14,8 @@ import (
 	apphttp "github.com/joao-accioly/artisan-store/api/internal/http"
 	"github.com/joao-accioly/artisan-store/api/internal/platform/db"
 	"github.com/joao-accioly/artisan-store/api/internal/platform/logger"
+	"github.com/joao-accioly/artisan-store/api/internal/security"
+	"github.com/joao-accioly/artisan-store/api/internal/service"
 )
 
 func main() {
@@ -42,13 +44,35 @@ func run() error {
 	defer pool.Close()
 
 	if cfg.AutoMigrate {
-		if err := db.MigrateUp(ctx, pool); err != nil {
-			return err
+		if migErr := db.MigrateUp(ctx, pool); migErr != nil {
+			return migErr
 		}
 		log.Info("database migrations applied successfully")
 	}
 
-	router := apphttp.NewRouter(cfg, log, pool)
+	hasher := security.NewArgon2idHasher(security.DefaultArgon2idParams())
+
+	if seedErr := db.SeedAdmin(ctx, pool, cfg, hasher, log); seedErr != nil {
+		return seedErr
+	}
+
+	jwtManager, err := security.NewJWTManager(cfg.JWTAccessSecret, cfg.JWTAccessTTL)
+	if err != nil {
+		return err
+	}
+
+	authService, err := service.NewAuthService(pool, hasher, jwtManager, cfg.JWTRefreshTTL, log)
+	if err != nil {
+		return err
+	}
+	userService := service.NewUserService(pool, hasher)
+
+	router := apphttp.NewRouter(cfg, log, apphttp.RouterDeps{
+		DB:         pool,
+		JWTManager: jwtManager,
+		Auth:       authService,
+		Users:      userService,
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.Address(),
