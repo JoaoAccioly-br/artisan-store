@@ -1,0 +1,123 @@
+openapi: 3.0.3
+info:
+  title: Doceria API
+  version: 0.1.0
+  description: >
+    API central do sistema de doceria (atende o app desktop Wails e a loja online Nuxt).
+    Contrato mantido em abordagem Spec-First desde a Fase 0.
+  contact:
+    name: João Accioly
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Ambiente de desenvolvimento local
+
+tags:
+  - name: System
+    description: Healthcheck e status da aplicação
+
+paths:
+  /healthz:
+    get:
+      tags:
+        - System
+      summary: Verifica a saúde da API e dependências essenciais
+      operationId: getHealthz
+      security: []
+      responses:
+        "200":
+          description: API operacional
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: API indisponível (dependência crítica fora do ar)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - database
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          example: ok
+        database:
+          type: string
+          enum: [up, down]
+          example: up
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-11-15T03:00:00Z"
+
+    PaginationMeta:
+      type: object
+      required:
+        - page
+        - page_size
+        - total_items
+        - total_pages
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          example: 20
+        total_items:
+          type: integer
+          minimum: 0
+          example: 42
+        total_pages:
+          type: integer
+          minimum: 0
+          example: 3
+
+    ErrorDetail:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Código de erro de domínio em SCREAMING_SNAKE_CASE
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          description: Mensagem legível para diagnóstico ou exibição
+          example: Dados inválidos na requisição
+        details:
+          type: object
+          additionalProperties: true
+          description: Metadados opcionais (ex. campos com falha de validação)
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"

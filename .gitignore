@@ -1,0 +1,50 @@
+# Ambiente e segredos
+.env
+.env.*
+!.env.example
+
+# Ferramentas locais do workspace
+skills/
+
+# Go
+api/bin/
+api/tmp/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Node / Frontends
+node_modules/
+.nuxt/
+.output/
+.nitro/
+.cache/
+dist/
+build/
+.turbo/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Wails
+desktop/build/bin/
+desktop/frontend/dist/
+
+# Uploads locais de desenvolvimento
+api/uploads/
+uploads/
+
+# IDEs e SO
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

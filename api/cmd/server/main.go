@@ -1,0 +1,90 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/joao-accioly/artisan-store/api/internal/config"
+	apphttp "github.com/joao-accioly/artisan-store/api/internal/http"
+	"github.com/joao-accioly/artisan-store/api/internal/platform/db"
+	"github.com/joao-accioly/artisan-store/api/internal/platform/logger"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("application terminated with error", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	log := logger.New(cfg.AppEnv, cfg.LogLevel)
+	slog.SetDefault(log)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if cfg.AutoMigrate {
+		if err := db.MigrateUp(ctx, pool); err != nil {
+			return err
+		}
+		log.Info("database migrations applied successfully")
+	}
+
+	router := apphttp.NewRouter(cfg, log, pool)
+
+	srv := &http.Server{
+		Addr:              cfg.Address(),
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		log.Info("http server listening",
+			slog.String("addr", srv.Addr),
+			slog.String("env", cfg.AppEnv),
+		)
+		if serveErr := srv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- serveErr
+		}
+		close(errCh)
+	}()
+
+	select {
+	case serveErr := <-errCh:
+		return serveErr
+	case <-ctx.Done():
+		log.Info("shutdown signal received, draining connections...")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+
+	log.Info("http server stopped gracefully")
+	return nil
+}

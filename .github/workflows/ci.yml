@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  repo-checks:
+    name: Validação de Contrato e Infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar docker-compose.yml
+        run: docker compose config -q
+
+      - name: Validar sintaxe do OpenAPI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+
+  api:
+    name: API (Go Lint & Tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar se api/go.mod existe
+        id: check_api
+        run: |
+          if [ -f "api/go.mod" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: steps.check_api.outputs.exists == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: golangci-lint
+        if: steps.check_api.outputs.exists == 'true'
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.15.0
+          working-directory: api
+          args: --config ../.golangci.yml
+
+      - name: Executar testes
+        if: steps.check_api.outputs.exists == 'true'
+        working-directory: api
+        run: go test -race -coverprofile=coverage.out ./...
+
+  desktop-frontend:
+    name: Desktop Frontend (Vue)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar se desktop/frontend/package.json existe
+        id: check_desktop
+        run: |
+          if [ -f "desktop/frontend/package.json" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.check_desktop.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Instalar, Lint e Testar
+        if: steps.check_desktop.outputs.exists == 'true'
+        working-directory: desktop/frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run test
+
+  web:
+    name: Web Loja (Nuxt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar se web/package.json existe
+        id: check_web
+        run: |
+          if [ -f "web/package.json" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.check_web.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instalar, Lint e Build
+        if: steps.check_web.outputs.exists == 'true'
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npm run build
