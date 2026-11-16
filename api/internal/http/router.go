@@ -18,10 +18,13 @@ import (
 
 // RouterDeps agrupa as dependências necessárias para montar o roteador HTTP.
 type RouterDeps struct {
-	DB         handler.DBPinger
-	JWTManager *security.JWTManager
-	Auth       handler.AuthUseCase
-	Users      handler.UserUseCase
+	DB             handler.DBPinger
+	JWTManager     *security.JWTManager
+	Auth           handler.AuthUseCase
+	Users          handler.UserUseCase
+	Catalog        handler.CatalogUseCase
+	MaxUploadBytes int64
+	UploadHandler  http.Handler
 }
 
 // NewRouter monta o roteador principal chi com middlewares globais, tratamento de erros
@@ -46,10 +49,16 @@ func NewRouter(cfg *config.Config, log *slog.Logger, deps RouterDeps) http.Handl
 		})
 	})
 
+	if deps.UploadHandler != nil {
+		r.Handle("/uploads/*", deps.UploadHandler)
+	}
+
 	srv := handler.NewServer(handler.ServerDeps{
-		DB:    deps.DB,
-		Auth:  deps.Auth,
-		Users: deps.Users,
+		DB:             deps.DB,
+		Auth:           deps.Auth,
+		Users:          deps.Users,
+		Catalog:        deps.Catalog,
+		MaxUploadBytes: deps.MaxUploadBytes,
 	})
 
 	strictMiddlewares := []oapi.StrictMiddlewareFunc{

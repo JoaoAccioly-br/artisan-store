@@ -27,6 +27,10 @@ func TestLoad_AllDefaults(t *testing.T) {
 		"HTTP_WRITE_TIMEOUT", "HTTP_IDLE_TIMEOUT",
 		"JWT_ACCESS_SECRET", "JWT_ACCESS_TTL", "JWT_REFRESH_TTL",
 		"SEED_ADMIN_NAME", "SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD",
+		"STORAGE_DRIVER", "STORAGE_LOCAL_DIR", "STORAGE_PUBLIC_URL",
+		"STORAGE_MAX_UPLOAD_BYTES", "STORAGE_S3_ENDPOINT", "STORAGE_S3_REGION",
+		"STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY",
+		"STORAGE_S3_USE_PATH_STYLE",
 	} {
 		unsetEnvForTest(t, k)
 	}
@@ -54,6 +58,16 @@ func TestLoad_AllDefaults(t *testing.T) {
 	assert.Equal(t, "Administrador", cfg.SeedAdminName)
 	assert.Empty(t, cfg.SeedAdminEmail)
 	assert.Empty(t, cfg.SeedAdminPassword)
+	assert.Equal(t, config.StorageDriverLocal, cfg.StorageDriver)
+	assert.Equal(t, "./uploads", cfg.StorageLocalDir)
+	assert.Equal(t, "http://localhost:8080/uploads", cfg.StoragePublicURL)
+	assert.Equal(t, int64(5242880), cfg.StorageMaxUploadBytes)
+	assert.Empty(t, cfg.StorageS3Endpoint)
+	assert.Equal(t, "us-east-1", cfg.StorageS3Region)
+	assert.Empty(t, cfg.StorageS3Bucket)
+	assert.Empty(t, cfg.StorageS3AccessKey)
+	assert.Empty(t, cfg.StorageS3SecretKey)
+	assert.False(t, cfg.StorageS3UsePathStyle)
 }
 
 func TestLoad_DefaultsAndOverrides(t *testing.T) {
@@ -75,6 +89,10 @@ func TestLoad_DefaultsAndOverrides(t *testing.T) {
 	t.Setenv("SEED_ADMIN_NAME", "Maria Confeiteira")
 	t.Setenv("SEED_ADMIN_EMAIL", "admin@doceria.com")
 	t.Setenv("SEED_ADMIN_PASSWORD", "SenhaForte#123")
+	t.Setenv("STORAGE_DRIVER", "local")
+	t.Setenv("STORAGE_LOCAL_DIR", "/var/lib/doceria/uploads")
+	t.Setenv("STORAGE_PUBLIC_URL", "https://cdn.doceria.com/uploads")
+	t.Setenv("STORAGE_MAX_UPLOAD_BYTES", "10485760")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -94,6 +112,10 @@ func TestLoad_DefaultsAndOverrides(t *testing.T) {
 	assert.Equal(t, "Maria Confeiteira", cfg.SeedAdminName)
 	assert.Equal(t, "admin@doceria.com", cfg.SeedAdminEmail)
 	assert.Equal(t, "SenhaForte#123", cfg.SeedAdminPassword)
+	assert.Equal(t, config.StorageDriverLocal, cfg.StorageDriver)
+	assert.Equal(t, "/var/lib/doceria/uploads", cfg.StorageLocalDir)
+	assert.Equal(t, "https://cdn.doceria.com/uploads", cfg.StoragePublicURL)
+	assert.Equal(t, int64(10485760), cfg.StorageMaxUploadBytes)
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -181,8 +203,15 @@ func TestLoad_RateLimitRPMValidation(t *testing.T) {
 func TestLoad_JWTSecretValidation(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	t.Run("short secret (< 32 chars) rejected", func(t *testing.T) {
-		for _, secret := range []string{"   ", "short-secret", strings.Repeat("a", 31)} {
+	t.Run("short or whitespace-only secret (< 32 chars) rejected", func(t *testing.T) {
+		for _, secret := range []string{
+			"   ",
+			strings.Repeat(" ", 32),
+			strings.Repeat("\t ", 20),
+			"   " + strings.Repeat("a", 28) + "   ",
+			"short-secret",
+			strings.Repeat("a", 31),
+		} {
 			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
 			t.Setenv("APP_ENV", "development")
 			t.Setenv("JWT_ACCESS_SECRET", secret)
@@ -264,6 +293,122 @@ func TestLoad_JWTTTLValidation(t *testing.T) {
 		_, err = config.Load()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parse environment config")
+	})
+}
+
+func TestLoad_StorageValidation(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	t.Run("invalid STORAGE_MAX_UPLOAD_BYTES <= 0", func(t *testing.T) {
+		for _, val := range []string{"0", "-1", "-5242880"} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("STORAGE_MAX_UPLOAD_BYTES", val)
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_MAX_UPLOAD_BYTES")
+		}
+
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+		t.Setenv("STORAGE_MAX_UPLOAD_BYTES", "not-a-number")
+		_, err := config.Load()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parse environment config")
+	})
+
+	t.Run("invalid STORAGE_DRIVER rejected", func(t *testing.T) {
+		for _, driver := range []string{"   ", "gcs", "azure"} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("STORAGE_DRIVER", driver)
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_DRIVER")
+		}
+	})
+
+	t.Run("local driver rejects whitespace STORAGE_LOCAL_DIR and normalizes driver case", func(t *testing.T) {
+		for _, dir := range []string{"   ", "\t"} {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("STORAGE_DRIVER", "local")
+			t.Setenv("STORAGE_LOCAL_DIR", dir)
+
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_LOCAL_DIR")
+		}
+
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+		t.Setenv("STORAGE_DRIVER", "  LOCAL  ")
+		t.Setenv("STORAGE_LOCAL_DIR", "./my-uploads")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, config.StorageDriverLocal, cfg.StorageDriver)
+		assert.Equal(t, "./my-uploads", cfg.StorageLocalDir)
+	})
+
+	t.Run("s3 driver validates required fields", func(t *testing.T) {
+		setBaseS3 := func(t *testing.T) {
+			t.Helper()
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/doceria?sslmode=disable")
+			t.Setenv("STORAGE_DRIVER", "s3")
+			t.Setenv("STORAGE_S3_BUCKET", "doceria-media")
+			t.Setenv("STORAGE_S3_REGION", "sa-east-1")
+			t.Setenv("STORAGE_S3_ACCESS_KEY", "minioadmin")
+			t.Setenv("STORAGE_S3_SECRET_KEY", "minioadmin-secret")
+		}
+
+		t.Run("missing bucket", func(t *testing.T) {
+			setBaseS3(t)
+			t.Setenv("STORAGE_S3_BUCKET", "   ")
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_S3_BUCKET")
+		})
+
+		t.Run("missing region", func(t *testing.T) {
+			setBaseS3(t)
+			t.Setenv("STORAGE_S3_REGION", " ")
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_S3_REGION")
+		})
+
+		t.Run("missing access key", func(t *testing.T) {
+			setBaseS3(t)
+			t.Setenv("STORAGE_S3_ACCESS_KEY", "")
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_S3 credentials")
+		})
+
+		t.Run("missing secret key", func(t *testing.T) {
+			setBaseS3(t)
+			t.Setenv("STORAGE_S3_SECRET_KEY", "   ")
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid STORAGE_S3 credentials")
+		})
+
+		t.Run("valid s3 configuration with custom endpoint, public url and path style", func(t *testing.T) {
+			setBaseS3(t)
+			t.Setenv("STORAGE_DRIVER", "  S3 ")
+			t.Setenv("STORAGE_PUBLIC_URL", "https://cdn.doceria.com")
+			t.Setenv("STORAGE_S3_ENDPOINT", "http://localhost:9000")
+			t.Setenv("STORAGE_S3_USE_PATH_STYLE", "true")
+
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			assert.Equal(t, config.StorageDriverS3, cfg.StorageDriver)
+			assert.Equal(t, "doceria-media", cfg.StorageS3Bucket)
+			assert.Equal(t, "sa-east-1", cfg.StorageS3Region)
+			assert.Equal(t, "minioadmin", cfg.StorageS3AccessKey)
+			assert.Equal(t, "minioadmin-secret", cfg.StorageS3SecretKey)
+			assert.Equal(t, "https://cdn.doceria.com", cfg.StoragePublicURL)
+			assert.Equal(t, "http://localhost:9000", cfg.StorageS3Endpoint)
+			assert.True(t, cfg.StorageS3UsePathStyle)
+		})
 	})
 }
 

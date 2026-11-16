@@ -41,20 +41,58 @@ func TestContextAuthenticatedUser(t *testing.T) {
 func TestDefaultOperationPolicies(t *testing.T) {
 	policies := middleware.DefaultOperationPolicies()
 
-	assert.True(t, policies["getHealthz"].Public)
-	assert.True(t, policies["adminLogin"].Public)
-	assert.True(t, policies["adminRefreshToken"].Public)
+	publicOps := []string{
+		"getHealthz",
+		"publicGetStore",
+		"publicGetMenu",
+		"publicGetProduct",
+		"adminLogin",
+		"adminRefreshToken",
+	}
+	for _, op := range publicOps {
+		p, exists := policies[op]
+		require.True(t, exists, "missing public policy for %s", op)
+		assert.True(t, p.Public, "expected %s to be public", op)
+	}
 
-	assert.False(t, policies["adminLogout"].Public)
-	assert.Equal(t, domain.AllRoles, policies["adminLogout"].AllowedRoles)
-	assert.False(t, policies["adminGetMe"].Public)
-	assert.Equal(t, domain.AllRoles, policies["adminGetMe"].AllowedRoles)
+	allRolesOps := []string{
+		"adminLogout",
+		"adminGetMe",
+		"adminGetSettings",
+		"adminListCategories",
+		"adminGetCategory",
+		"adminListProducts",
+		"adminGetProduct",
+	}
+	for _, op := range allRolesOps {
+		p, exists := policies[op]
+		require.True(t, exists, "missing all-roles policy for %s", op)
+		assert.False(t, p.Public, "expected %s to require auth", op)
+		assert.Equal(t, domain.AllRoles, p.AllowedRoles, "expected AllRoles for %s", op)
+	}
 
-	for _, adminOp := range []string{"adminListUsers", "adminCreateUser", "adminGetUser", "adminUpdateUser"} {
+	adminOnlyOps := []string{
+		"adminListUsers",
+		"adminCreateUser",
+		"adminGetUser",
+		"adminUpdateUser",
+		"adminUpdateSettings",
+		"adminCreateCategory",
+		"adminUpdateCategory",
+		"adminDeleteCategory",
+		"adminCreateProduct",
+		"adminUpdateProduct",
+		"adminDeleteProduct",
+		"adminUploadProductImage",
+		"adminCreateProductVariant",
+		"adminUpdateProductVariant",
+		"adminDeleteProductVariant",
+	}
+	for _, adminOp := range adminOnlyOps {
 		p, exists := policies[adminOp]
 		require.True(t, exists, "missing policy for %s", adminOp)
-		assert.False(t, p.Public)
-		assert.Equal(t, []domain.Role{domain.RoleAdmin}, p.AllowedRoles)
+		assert.False(t, p.Public, "expected %s to require auth", adminOp)
+		assert.Equal(t, []domain.Role{domain.RoleAdmin}, p.AllowedRoles, "expected admin-only for %s", adminOp)
 	}
 }
 
@@ -83,8 +121,24 @@ func TestNewStrictAuthMiddleware(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	cozinhaID, err := uuid.NewV7()
+	require.NoError(t, err)
+	cozinhaToken, _, err := jwtMgr.GenerateAccessToken(domain.User{
+		ID:    cozinhaID,
+		Email: "cozinha@doceria.com",
+		Role:  domain.RoleCozinha,
+	})
+	require.NoError(t, err)
+
 	t.Run("public operation passes without token", func(t *testing.T) {
-		for _, opID := range []string{"getHealthz", "AdminLogin", "AdminRefreshToken"} {
+		for _, opID := range []string{
+			"getHealthz",
+			"PublicGetStore",
+			"PublicGetMenu",
+			"PublicGetProduct",
+			"AdminLogin",
+			"AdminRefreshToken",
+		} {
 			called := false
 			next := func(ctx context.Context, _ http.ResponseWriter, _ *http.Request, _ any) (any, error) {
 				called = true
@@ -93,7 +147,7 @@ func TestNewStrictAuthMiddleware(t *testing.T) {
 				return "ok", nil
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			req := httptest.NewRequest(http.MethodGet, "/public", nil)
 			rec := httptest.NewRecorder()
 			resp, mwErr := mw(next, opID)(context.Background(), rec, req, nil)
 			require.NoError(t, mwErr)
@@ -212,23 +266,81 @@ func TestNewStrictAuthMiddleware(t *testing.T) {
 		}
 	})
 
-	t.Run("RBAC rejects unauthorized role with 403 FORBIDDEN", func(t *testing.T) {
-		for _, opID := range []string{"AdminListUsers", "AdminCreateUser", "AdminGetUser", "AdminUpdateUser"} {
+	t.Run("RBAC rejects atendente and cozinha on admin-only write/upload/delete operations with 403 FORBIDDEN", func(t *testing.T) {
+		adminOnlyOps := []string{
+			"AdminListUsers",
+			"AdminCreateUser",
+			"AdminGetUser",
+			"AdminUpdateUser",
+			"AdminUpdateSettings",
+			"AdminCreateCategory",
+			"AdminUpdateCategory",
+			"AdminDeleteCategory",
+			"AdminCreateProduct",
+			"AdminUpdateProduct",
+			"AdminDeleteProduct",
+			"AdminUploadProductImage",
+			"AdminCreateProductVariant",
+			"AdminUpdateProductVariant",
+			"AdminDeleteProductVariant",
+		}
+
+		for _, roleToken := range []struct {
+			role  string
+			token string
+		}{
+			{role: "atendente", token: atendenteToken},
+			{role: "cozinha", token: cozinhaToken},
+		} {
+			for _, opID := range adminOnlyOps {
+				called := false
+				next := func(context.Context, http.ResponseWriter, *http.Request, any) (any, error) {
+					called = true
+					return nil, nil
+				}
+
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/restricted", nil)
+				req.Header.Set("Authorization", "Bearer "+roleToken.token)
+				_, mwErr := mw(next, opID)(context.Background(), httptest.NewRecorder(), req, nil)
+				assert.False(t, called, "role=%s op=%s should not pass", roleToken.role, opID)
+				require.Error(t, mwErr, "role=%s op=%s should fail", roleToken.role, opID)
+
+				domErr, ok := domain.AsDomainError(mwErr)
+				require.True(t, ok)
+				assert.Equal(t, domain.CodeForbidden, domErr.Code, "role=%s op=%s", roleToken.role, opID)
+			}
+		}
+	})
+
+	t.Run("admin succeeds on admin-only catalog operations", func(t *testing.T) {
+		for _, opID := range []string{
+			"AdminUpdateSettings",
+			"AdminCreateCategory",
+			"AdminUpdateCategory",
+			"AdminDeleteCategory",
+			"AdminCreateProduct",
+			"AdminUpdateProduct",
+			"AdminDeleteProduct",
+			"AdminUploadProductImage",
+			"AdminCreateProductVariant",
+			"AdminUpdateProductVariant",
+			"AdminDeleteProductVariant",
+		} {
 			called := false
-			next := func(context.Context, http.ResponseWriter, *http.Request, any) (any, error) {
+			next := func(ctx context.Context, _ http.ResponseWriter, _ *http.Request, _ any) (any, error) {
 				called = true
-				return nil, nil
+				u, ok := middleware.GetAuthenticatedUser(ctx)
+				assert.True(t, ok)
+				assert.Equal(t, domain.RoleAdmin, u.Role)
+				return "ok", nil
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
-			req.Header.Set("Authorization", "Bearer "+atendenteToken)
-			_, mwErr := mw(next, opID)(context.Background(), httptest.NewRecorder(), req, nil)
-			assert.False(t, called)
-			require.Error(t, mwErr)
-
-			domErr, ok := domain.AsDomainError(mwErr)
-			require.True(t, ok)
-			assert.Equal(t, domain.CodeForbidden, domErr.Code)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/catalog", nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			resp, mwErr := mw(next, opID)(context.Background(), httptest.NewRecorder(), req, nil)
+			require.NoError(t, mwErr, "op=%s", opID)
+			assert.Equal(t, "ok", resp)
+			assert.True(t, called)
 		}
 	})
 
@@ -251,19 +363,39 @@ func TestNewStrictAuthMiddleware(t *testing.T) {
 		assert.Equal(t, domain.RoleAdmin, capturedUser.Role)
 	})
 
-	t.Run("non-admin role succeeds on operation allowing all roles", func(t *testing.T) {
-		var capturedUser middleware.AuthenticatedUser
-		next := func(ctx context.Context, _ http.ResponseWriter, _ *http.Request, _ any) (any, error) {
-			capturedUser, _ = middleware.GetAuthenticatedUser(ctx)
-			return "me", nil
+	t.Run("atendente and cozinha succeed on catalog read operations", func(t *testing.T) {
+		readOps := []string{
+			"AdminGetMe",
+			"AdminGetSettings",
+			"AdminListCategories",
+			"AdminGetCategory",
+			"AdminListProducts",
+			"AdminGetProduct",
 		}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/auth/me", nil)
-		req.Header.Set("Authorization", "Bearer "+atendenteToken)
-		resp, mwErr := mw(next, "AdminGetMe")(context.Background(), httptest.NewRecorder(), req, nil)
-		require.NoError(t, mwErr)
-		assert.Equal(t, "me", resp)
-		assert.Equal(t, atendenteID, capturedUser.ID)
-		assert.Equal(t, domain.RoleAtendente, capturedUser.Role)
+		for _, actor := range []struct {
+			id    uuid.UUID
+			role  domain.Role
+			token string
+		}{
+			{id: atendenteID, role: domain.RoleAtendente, token: atendenteToken},
+			{id: cozinhaID, role: domain.RoleCozinha, token: cozinhaToken},
+		} {
+			for _, opID := range readOps {
+				var capturedUser middleware.AuthenticatedUser
+				next := func(ctx context.Context, _ http.ResponseWriter, _ *http.Request, _ any) (any, error) {
+					capturedUser, _ = middleware.GetAuthenticatedUser(ctx)
+					return "ok", nil
+				}
+
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/catalog", nil)
+				req.Header.Set("Authorization", "Bearer "+actor.token)
+				resp, mwErr := mw(next, opID)(context.Background(), httptest.NewRecorder(), req, nil)
+				require.NoError(t, mwErr, "role=%s op=%s", actor.role, opID)
+				assert.Equal(t, "ok", resp)
+				assert.Equal(t, actor.id, capturedUser.ID)
+				assert.Equal(t, actor.role, capturedUser.Role)
+			}
+		}
 	})
 }

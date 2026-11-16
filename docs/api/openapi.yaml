@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Artisan StoreArtisan Store API
-  version: 0.22.0
+  title: Artisan Store API
+  version: 0.3.0
   description: >
-    API central do sistema de gestão e vendasgestão e vendas (atende o app desktop Wails e a loja online Nuxt).
+    API central do sistema de gestão e vendas (atende o app desktop Wails e a loja online Nuxt).
     Contrato mantido em abordagem Spec-First desde a Fase 0.
   contact:
     name: João Accioly
@@ -18,10 +18,16 @@ servers:
 tags:
   - name: System
     description: Healthcheck e status da aplicação
+  - name: Public Store & Catalog
+    description: Consulta pública de dados da loja, cardápio e produtos para a loja online
   - name: Admin Auth
     description: Autenticação de funcionários (JWT access + refresh rotativo)
   - name: Admin Users
     description: Gestão de usuários e funcionários (apenas administradores)
+  - name: Admin Settings
+    description: Configurações gerais e horários de funcionamento da loja
+  - name: Admin Catalog
+    description: Gestão de categorias, produtos, variantes e imagens
 
 paths:
   /healthz:
@@ -40,6 +46,101 @@ paths:
                 $ref: "#/components/schemas/HealthResponse"
         "503":
           description: API indisponível (dependência crítica fora do ar)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/public/store:
+    get:
+      tags:
+        - Public Store & Catalog
+      summary: Retorna informações públicas, horários, métodos de pagamento e status da loja
+      operationId: publicGetStore
+      security: []
+      responses:
+        "200":
+          description: Dados públicos da loja
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicStoreResponse"
+        "500":
+          description: Erro interno ao carregar dados da loja
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/public/menu:
+    get:
+      tags:
+        - Public Store & Catalog
+      summary: Retorna o cardápio público organizado por categorias e produtos com variantes disponíveis
+      operationId: publicGetMenu
+      security: []
+      parameters:
+        - name: category_slug
+          in: query
+          description: Filtrar por slug da categoria
+          required: false
+          schema:
+            type: string
+        - name: service_type
+          in: query
+          description: Filtrar por tipo de atendimento
+          required: false
+          schema:
+            $ref: "#/components/schemas/ServiceType"
+        - name: search
+          in: query
+          description: Busca textual no nome ou descrição do produto
+          required: false
+          schema:
+            type: string
+        - name: featured_only
+          in: query
+          description: Retornar apenas produtos em destaque
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Cardápio público
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicMenuResponse"
+        "400":
+          description: Parâmetros de filtro inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/public/products/{slugOrId}:
+    get:
+      tags:
+        - Public Store & Catalog
+      summary: Retorna detalhes públicos de um produto ativo por slug ou UUID
+      operationId: publicGetProduct
+      security: []
+      parameters:
+        - name: slugOrId
+          in: path
+          required: true
+          description: Slug ou UUIDv7 do produto
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Detalhes públicos do produto e suas variantes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicProductResponse"
+        "404":
+          description: Produto não encontrado ou indisponível na loja online
           content:
             application/json:
               schema:
@@ -361,6 +462,815 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/settings:
+    get:
+      tags:
+        - Admin Settings
+      summary: Retorna configurações atuais da loja
+      operationId: adminGetSettings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Configurações atuais da loja
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreSettingsResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Permissão insuficiente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - Admin Settings
+      summary: Atualiza configurações da loja
+      operationId: adminUpdateSettings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStoreSettingsRequest"
+      responses:
+        "200":
+          description: Configurações atualizadas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreSettingsResponse"
+        "400":
+          description: Dados de configuração inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/categories:
+    get:
+      tags:
+        - Admin Catalog
+      summary: Lista categorias cadastradas com paginação
+      operationId: adminListCategories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: active
+          in: query
+          description: Filtrar por status ativo/inativo
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Lista paginada de categorias
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedCategoriesResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Permissão insuficiente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Admin Catalog
+      summary: Cadastra nova categoria de produtos
+      operationId: adminCreateCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "201":
+          description: Categoria criada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Slug de categoria já existe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/categories/{id}:
+    get:
+      tags:
+        - Admin Catalog
+      summary: Busca categoria por ID
+      operationId: adminGetCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID da categoria (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Detalhes da categoria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Permissão insuficiente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - Admin Catalog
+      summary: Atualiza dados de categoria
+      operationId: adminUpdateCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID da categoria (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCategoryRequest"
+      responses:
+        "200":
+          description: Categoria atualizada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Slug já está em uso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Admin Catalog
+      summary: Remove uma categoria sem produtos vinculados
+      operationId: adminDeleteCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID da categoria (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Categoria removida com sucesso
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Categoria possui produtos vinculados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/products:
+    get:
+      tags:
+        - Admin Catalog
+      summary: Lista produtos cadastrados com suas variantes e filtros
+      operationId: adminListProducts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: category_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: service_type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ServiceType"
+        - name: active
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: available_online
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lista paginada de produtos com variantes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedProductsResponse"
+        "400":
+          description: Parâmetros inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Permissão insuficiente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - Admin Catalog
+      summary: Cadastra novo produto com ao menos uma variante inicial
+      operationId: adminCreateProduct
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Produto criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Categoria não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Slug do produto ou SKU de variante já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/products/{id}:
+    get:
+      tags:
+        - Admin Catalog
+      summary: Busca detalhes completos de um produto e suas variantes
+      operationId: adminGetProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Detalhes do produto
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Permissão insuficiente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - Admin Catalog
+      summary: Atualiza dados cadastrais do produto
+      operationId: adminUpdateProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: Produto atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto ou categoria não encontrados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Slug do produto já está em uso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Admin Catalog
+      summary: Remove um produto e suas variantes
+      operationId: adminDeleteProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Produto removido com sucesso
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/products/{id}/image:
+    post:
+      tags:
+        - Admin Catalog
+      summary: Faz upload ou substituição da imagem do produto (JPEG, PNG ou WebP)
+      operationId: adminUploadProductImage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Imagem JPEG, PNG ou WebP até o limite configurado
+      responses:
+        "200":
+          description: Imagem atualizada e produto retornado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "400":
+          description: Arquivo ausente, formato inválido (magic bytes) ou tamanho excedido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/products/{id}/variants:
+    post:
+      tags:
+        - Admin Catalog
+      summary: Adiciona nova variante a um produto existente
+      operationId: adminCreateProductVariant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariantRequest"
+      responses:
+        "201":
+          description: Variante criada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductVariantResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: SKU já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/products/{id}/variants/{variant_id}:
+    patch:
+      tags:
+        - Admin Catalog
+      summary: Atualiza dados, preço ou estoque mínimo de uma variante
+      operationId: adminUpdateProductVariant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+        - name: variant_id
+          in: path
+          required: true
+          description: ID da variante (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariantRequest"
+      responses:
+        "200":
+          description: Variante atualizada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductVariantResponse"
+        "400":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto ou variante não encontrados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: SKU já em uso ou tentativa de desativar a única variante ativa
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - Admin Catalog
+      summary: Remove uma variante (não permite remover a última variante do produto)
+      operationId: adminDeleteProductVariant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do produto (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+        - name: variant_id
+          in: path
+          required: true
+          description: ID da variante (UUIDv7)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Variante removida com sucesso
+        "401":
+          description: Token não fornecido ou inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Acesso restrito a administradores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Produto ou variante não encontrados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Produto precisa manter ao menos uma variante
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -393,6 +1303,664 @@ components:
       type: string
       enum: [admin, atendente, cozinha, entregador]
       example: admin
+
+    ServiceType:
+      type: string
+      enum: [pronta_entrega, sob_encomenda]
+      example: pronta_entrega
+
+    PaymentMethod:
+      type: string
+      enum: [pix_online, cartao_entrega, dinheiro_entrega, pagamento_retirada]
+      example: pix_online
+
+    StoreManualStatus:
+      type: string
+      enum: [auto, open, closed]
+      example: auto
+
+    DaySchedule:
+      type: object
+      required:
+        - open
+        - close
+        - closed
+      properties:
+        open:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          example: "09:00"
+        close:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          example: "18:00"
+        closed:
+          type: boolean
+          example: false
+
+    OpeningHours:
+      type: object
+      required:
+        - monday
+        - tuesday
+        - wednesday
+        - thursday
+        - friday
+        - saturday
+        - sunday
+      properties:
+        monday:
+          $ref: "#/components/schemas/DaySchedule"
+        tuesday:
+          $ref: "#/components/schemas/DaySchedule"
+        wednesday:
+          $ref: "#/components/schemas/DaySchedule"
+        thursday:
+          $ref: "#/components/schemas/DaySchedule"
+        friday:
+          $ref: "#/components/schemas/DaySchedule"
+        saturday:
+          $ref: "#/components/schemas/DaySchedule"
+        sunday:
+          $ref: "#/components/schemas/DaySchedule"
+
+    StoreSettingsResponse:
+      type: object
+      required:
+        - id
+        - store_name
+        - description
+        - phone
+        - whatsapp
+        - email
+        - address_line
+        - opening_hours
+        - accepted_payment_methods
+        - manual_status
+        - allow_scheduling
+        - pix_reservation_ttl_minutes
+        - auto_hide_out_of_stock
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        store_name:
+          type: string
+          example: "Artisan Store Doceria"
+        description:
+          type: string
+          example: "Doces artesanais feitos diariamente."
+        phone:
+          type: string
+          example: "(11) 3333-4444"
+        whatsapp:
+          type: string
+          example: "5511999998888"
+        email:
+          type: string
+          example: "contato@doceria.local"
+        address_line:
+          type: string
+          example: "Rua das Flores, 123 - Centro"
+        opening_hours:
+          $ref: "#/components/schemas/OpeningHours"
+        accepted_payment_methods:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentMethod"
+        manual_status:
+          $ref: "#/components/schemas/StoreManualStatus"
+        allow_scheduling:
+          type: boolean
+        pix_reservation_ttl_minutes:
+          type: integer
+          minimum: 1
+          example: 15
+        auto_hide_out_of_stock:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateStoreSettingsRequest:
+      type: object
+      properties:
+        store_name:
+          type: string
+          minLength: 2
+        description:
+          type: string
+        phone:
+          type: string
+        whatsapp:
+          type: string
+        email:
+          type: string
+        address_line:
+          type: string
+        opening_hours:
+          $ref: "#/components/schemas/OpeningHours"
+        accepted_payment_methods:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PaymentMethod"
+        manual_status:
+          $ref: "#/components/schemas/StoreManualStatus"
+        allow_scheduling:
+          type: boolean
+        pix_reservation_ttl_minutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+        auto_hide_out_of_stock:
+          type: boolean
+
+    PublicStoreResponse:
+      type: object
+      required:
+        - store_name
+        - description
+        - phone
+        - whatsapp
+        - email
+        - address_line
+        - opening_hours
+        - accepted_payment_methods
+        - manual_status
+        - is_open_now
+        - allow_scheduling
+        - pix_reservation_ttl_minutes
+        - auto_hide_out_of_stock
+      properties:
+        store_name:
+          type: string
+        description:
+          type: string
+        phone:
+          type: string
+        whatsapp:
+          type: string
+        email:
+          type: string
+        address_line:
+          type: string
+        opening_hours:
+          $ref: "#/components/schemas/OpeningHours"
+        accepted_payment_methods:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentMethod"
+        manual_status:
+          $ref: "#/components/schemas/StoreManualStatus"
+        is_open_now:
+          type: boolean
+        allow_scheduling:
+          type: boolean
+        pix_reservation_ttl_minutes:
+          type: integer
+        auto_hide_out_of_stock:
+          type: boolean
+
+    CategoryResponse:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+        - sort_order
+        - active
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Brigadeiros Gourmet"
+        slug:
+          type: string
+          example: "brigadeiros-gourmet"
+        sort_order:
+          type: integer
+          example: 1
+        active:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateCategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 2
+          example: "Brigadeiros Gourmet"
+        slug:
+          type: string
+          description: Opcional; se omitido, é gerado a partir do nome
+          example: "brigadeiros-gourmet"
+        sort_order:
+          type: integer
+          default: 0
+        active:
+          type: boolean
+          default: true
+
+    UpdateCategoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+        slug:
+          type: string
+        sort_order:
+          type: integer
+        active:
+          type: boolean
+
+    PaginatedCategoriesResponse:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    ProductVariantResponse:
+      type: object
+      required:
+        - id
+        - product_id
+        - name
+        - price_cents
+        - current_stock
+        - reserved_stock
+        - available_stock
+        - min_stock
+        - sort_order
+        - active
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Caixa com 6"
+        sku:
+          type: string
+          nullable: true
+          example: "BRIG-CX6"
+        price_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 2990
+        current_stock:
+          type: integer
+          minimum: 0
+          example: 20
+        reserved_stock:
+          type: integer
+          minimum: 0
+          example: 2
+        available_stock:
+          type: integer
+          minimum: 0
+          example: 18
+        min_stock:
+          type: integer
+          minimum: 0
+          example: 5
+        sort_order:
+          type: integer
+          example: 1
+        active:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateVariantRequest:
+      type: object
+      required:
+        - name
+        - price_cents
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: "Caixa com 6"
+        sku:
+          type: string
+          nullable: true
+          example: "BRIG-CX6"
+        price_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 2990
+        current_stock:
+          type: integer
+          minimum: 0
+          default: 0
+        min_stock:
+          type: integer
+          minimum: 0
+          default: 0
+        sort_order:
+          type: integer
+          default: 0
+        active:
+          type: boolean
+          default: true
+
+    UpdateVariantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        sku:
+          type: string
+          nullable: true
+        price_cents:
+          type: integer
+          format: int64
+          minimum: 0
+        min_stock:
+          type: integer
+          minimum: 0
+        sort_order:
+          type: integer
+        active:
+          type: boolean
+
+    ProductResponse:
+      type: object
+      required:
+        - id
+        - category_id
+        - name
+        - slug
+        - description
+        - service_type
+        - prep_time_minutes
+        - active
+        - available_online
+        - featured
+        - sort_order
+        - variants
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        category_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Brigadeiro Belga"
+        slug:
+          type: string
+          example: "brigadeiro-belga"
+        description:
+          type: string
+          example: "Feito com chocolate belga Callebaut."
+        image_url:
+          type: string
+          nullable: true
+          example: "http://localhost:8080/uploads/products/brigadeiro.webp"
+        service_type:
+          $ref: "#/components/schemas/ServiceType"
+        prep_time_minutes:
+          type: integer
+          minimum: 0
+          example: 0
+        active:
+          type: boolean
+          example: true
+        available_online:
+          type: boolean
+          example: true
+        featured:
+          type: boolean
+          example: false
+        sort_order:
+          type: integer
+          example: 0
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductVariantResponse"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateProductRequest:
+      type: object
+      required:
+        - category_id
+        - name
+        - service_type
+        - variants
+      properties:
+        category_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 2
+        slug:
+          type: string
+        description:
+          type: string
+        service_type:
+          $ref: "#/components/schemas/ServiceType"
+        prep_time_minutes:
+          type: integer
+          minimum: 0
+          default: 0
+        active:
+          type: boolean
+          default: true
+        available_online:
+          type: boolean
+          default: true
+        featured:
+          type: boolean
+          default: false
+        sort_order:
+          type: integer
+          default: 0
+        variants:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CreateVariantRequest"
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        category_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 2
+        slug:
+          type: string
+        description:
+          type: string
+        service_type:
+          $ref: "#/components/schemas/ServiceType"
+        prep_time_minutes:
+          type: integer
+          minimum: 0
+        active:
+          type: boolean
+        available_online:
+          type: boolean
+        featured:
+          type: boolean
+        sort_order:
+          type: integer
+
+    PaginatedProductsResponse:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductResponse"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    PublicVariantResponse:
+      type: object
+      required:
+        - id
+        - name
+        - price_cents
+        - in_stock
+        - available_stock
+        - sort_order
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sku:
+          type: string
+          nullable: true
+        price_cents:
+          type: integer
+          format: int64
+        in_stock:
+          type: boolean
+        available_stock:
+          type: integer
+          minimum: 0
+        sort_order:
+          type: integer
+
+    PublicProductResponse:
+      type: object
+      required:
+        - id
+        - category_id
+        - category_name
+        - category_slug
+        - name
+        - slug
+        - description
+        - service_type
+        - prep_time_minutes
+        - featured
+        - in_stock
+        - variants
+      properties:
+        id:
+          type: string
+          format: uuid
+        category_id:
+          type: string
+          format: uuid
+        category_name:
+          type: string
+        category_slug:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        image_url:
+          type: string
+          nullable: true
+        service_type:
+          $ref: "#/components/schemas/ServiceType"
+        prep_time_minutes:
+          type: integer
+        featured:
+          type: boolean
+        in_stock:
+          type: boolean
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicVariantResponse"
+
+    PublicMenuCategory:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+        - sort_order
+        - products
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        sort_order:
+          type: integer
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicProductResponse"
+
+    PublicMenuResponse:
+      type: object
+      required:
+        - categories
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicMenuCategory"
 
     UserResponse:
       type: object

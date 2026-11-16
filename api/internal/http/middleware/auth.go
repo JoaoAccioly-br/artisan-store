@@ -33,16 +33,46 @@ type OperationPolicy struct {
 // DefaultOperationPolicies mapeia explicitamente a política de acesso por operationID do OpenAPI.
 // Operações não cadastradas falham fechadas (negam acesso por padrão).
 func DefaultOperationPolicies() map[string]OperationPolicy {
+	adminOnly := []domain.Role{domain.RoleAdmin}
+
 	return map[string]OperationPolicy{
-		"getHealthz":        {Public: true},
+		// System & Public
+		"getHealthz":       {Public: true},
+		"publicGetStore":   {Public: true},
+		"publicGetMenu":    {Public: true},
+		"publicGetProduct": {Public: true},
+
+		// Auth
 		"adminLogin":        {Public: true},
 		"adminRefreshToken": {Public: true},
 		"adminLogout":       {AllowedRoles: domain.AllRoles},
 		"adminGetMe":        {AllowedRoles: domain.AllRoles},
-		"adminListUsers":    {AllowedRoles: []domain.Role{domain.RoleAdmin}},
-		"adminCreateUser":   {AllowedRoles: []domain.Role{domain.RoleAdmin}},
-		"adminGetUser":      {AllowedRoles: []domain.Role{domain.RoleAdmin}},
-		"adminUpdateUser":   {AllowedRoles: []domain.Role{domain.RoleAdmin}},
+
+		// Users
+		"adminListUsers":  {AllowedRoles: adminOnly},
+		"adminCreateUser": {AllowedRoles: adminOnly},
+		"adminGetUser":    {AllowedRoles: adminOnly},
+		"adminUpdateUser": {AllowedRoles: adminOnly},
+
+		// Settings
+		"adminGetSettings":    {AllowedRoles: domain.AllRoles},
+		"adminUpdateSettings": {AllowedRoles: adminOnly},
+
+		// Catalog
+		"adminListCategories":       {AllowedRoles: domain.AllRoles},
+		"adminGetCategory":          {AllowedRoles: domain.AllRoles},
+		"adminCreateCategory":       {AllowedRoles: adminOnly},
+		"adminUpdateCategory":       {AllowedRoles: adminOnly},
+		"adminDeleteCategory":       {AllowedRoles: adminOnly},
+		"adminListProducts":         {AllowedRoles: domain.AllRoles},
+		"adminGetProduct":           {AllowedRoles: domain.AllRoles},
+		"adminCreateProduct":        {AllowedRoles: adminOnly},
+		"adminUpdateProduct":        {AllowedRoles: adminOnly},
+		"adminDeleteProduct":        {AllowedRoles: adminOnly},
+		"adminUploadProductImage":   {AllowedRoles: adminOnly},
+		"adminCreateProductVariant": {AllowedRoles: adminOnly},
+		"adminUpdateProductVariant": {AllowedRoles: adminOnly},
+		"adminDeleteProductVariant": {AllowedRoles: adminOnly},
 	}
 }
 

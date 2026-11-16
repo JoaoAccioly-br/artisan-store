@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	apphttp "github.com/joao-accioly/artisan-store/api/internal/http"
 	"github.com/joao-accioly/artisan-store/api/internal/platform/db"
 	"github.com/joao-accioly/artisan-store/api/internal/platform/logger"
+	"github.com/joao-accioly/artisan-store/api/internal/platform/storage"
 	"github.com/joao-accioly/artisan-store/api/internal/security"
 	"github.com/joao-accioly/artisan-store/api/internal/service"
 )
@@ -61,17 +63,29 @@ func run() error {
 		return err
 	}
 
+	imgStorage, uploadHandler, err := initStorage(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
 	authService, err := service.NewAuthService(pool, hasher, jwtManager, cfg.JWTRefreshTTL, log)
 	if err != nil {
 		return err
 	}
 	userService := service.NewUserService(pool, hasher)
+	catalogService, err := service.NewCatalogService(pool, imgStorage, cfg.StorageMaxUploadBytes, log)
+	if err != nil {
+		return err
+	}
 
 	router := apphttp.NewRouter(cfg, log, apphttp.RouterDeps{
-		DB:         pool,
-		JWTManager: jwtManager,
-		Auth:       authService,
-		Users:      userService,
+		DB:             pool,
+		JWTManager:     jwtManager,
+		Auth:           authService,
+		Users:          userService,
+		Catalog:        catalogService,
+		MaxUploadBytes: cfg.StorageMaxUploadBytes,
+		UploadHandler:  uploadHandler,
 	})
 
 	srv := &http.Server{
@@ -88,6 +102,7 @@ func run() error {
 		log.Info("http server listening",
 			slog.String("addr", srv.Addr),
 			slog.String("env", cfg.AppEnv),
+			slog.String("storage_driver", cfg.StorageDriver),
 		)
 		if serveErr := srv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			errCh <- serveErr
@@ -111,4 +126,31 @@ func run() error {
 
 	log.Info("http server stopped gracefully")
 	return nil
+}
+
+func initStorage(ctx context.Context, cfg *config.Config) (storage.Storage, http.Handler, error) {
+	switch cfg.StorageDriver {
+	case config.StorageDriverLocal:
+		localStore, err := storage.NewLocalStorage(cfg.StorageLocalDir, cfg.StoragePublicURL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("init local storage: %w", err)
+		}
+		return localStore, localStore.FileServerHandler("/uploads"), nil
+	case config.StorageDriverS3:
+		s3Store, err := storage.NewS3Storage(ctx, storage.S3Config{
+			Endpoint:      cfg.StorageS3Endpoint,
+			Region:        cfg.StorageS3Region,
+			Bucket:        cfg.StorageS3Bucket,
+			AccessKey:     cfg.StorageS3AccessKey,
+			SecretKey:     cfg.StorageS3SecretKey,
+			PublicBaseURL: cfg.StoragePublicURL,
+			UsePathStyle:  cfg.StorageS3UsePathStyle,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("init s3 storage: %w", err)
+		}
+		return s3Store, nil, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported storage driver %q", cfg.StorageDriver)
+	}
 }

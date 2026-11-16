@@ -11,6 +11,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Category struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	SortOrder int32     `json:"sort_order"`
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Product struct {
+	ID              uuid.UUID   `json:"id"`
+	CategoryID      uuid.UUID   `json:"category_id"`
+	Name            string      `json:"name"`
+	Slug            string      `json:"slug"`
+	Description     string      `json:"description"`
+	ImageUrl        pgtype.Text `json:"image_url"`
+	ImageKey        pgtype.Text `json:"image_key"`
+	ServiceType     string      `json:"service_type"`
+	PrepTimeMinutes int32       `json:"prep_time_minutes"`
+	Active          bool        `json:"active"`
+	AvailableOnline bool        `json:"available_online"`
+	Featured        bool        `json:"featured"`
+	SortOrder       int32       `json:"sort_order"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
+}
+
+type ProductVariant struct {
+	ID            uuid.UUID   `json:"id"`
+	ProductID     uuid.UUID   `json:"product_id"`
+	Name          string      `json:"name"`
+	Sku           pgtype.Text `json:"sku"`
+	PriceCents    int64       `json:"price_cents"`
+	CurrentStock  int32       `json:"current_stock"`
+	ReservedStock int32       `json:"reserved_stock"`
+	MinStock      int32       `json:"min_stock"`
+	SortOrder     int32       `json:"sort_order"`
+	Active        bool        `json:"active"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+}
+
 type RefreshToken struct {
 	ID           uuid.UUID          `json:"id"`
 	UserID       uuid.UUID          `json:"user_id"`
@@ -20,6 +63,25 @@ type RefreshToken struct {
 	RevokedAt    pgtype.Timestamptz `json:"revoked_at"`
 	ReplacedByID pgtype.UUID        `json:"replaced_by_id"`
 	CreatedAt    time.Time          `json:"created_at"`
+}
+
+type StoreSetting struct {
+	ID                       uuid.UUID `json:"id"`
+	SingletonKey             bool      `json:"singleton_key"`
+	StoreName                string    `json:"store_name"`
+	Description              string    `json:"description"`
+	Phone                    string    `json:"phone"`
+	Whatsapp                 string    `json:"whatsapp"`
+	Email                    string    `json:"email"`
+	AddressLine              string    `json:"address_line"`
+	OpeningHours             []byte    `json:"opening_hours"`
+	AcceptedPaymentMethods   []string  `json:"accepted_payment_methods"`
+	ManualStatus             string    `json:"manual_status"`
+	AllowScheduling          bool      `json:"allow_scheduling"`
+	PixReservationTtlMinutes int32     `json:"pix_reservation_ttl_minutes"`
+	AutoHideOutOfStock       bool      `json:"auto_hide_out_of_stock"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 type SystemMetadatum struct {
