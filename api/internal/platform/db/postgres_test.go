@@ -25,6 +25,32 @@ func tableExists(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tableNam
 	return exists
 }
 
+func assertCatalogSeedSingleton(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var (
+		count         int
+		id            string
+		storeName     string
+		manualStatus  string
+		ttlMinutes    int
+		autoHideStock bool
+	)
+	err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM store_settings").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	err = pool.QueryRow(
+		ctx,
+		"SELECT id::text, store_name, manual_status, pix_reservation_ttl_minutes, auto_hide_out_of_stock FROM store_settings WHERE singleton_key = TRUE",
+	).Scan(&id, &storeName, &manualStatus, &ttlMinutes, &autoHideStock)
+	require.NoError(t, err)
+	assert.Equal(t, "01930000-0000-7000-8000-000000000001", id)
+	assert.Equal(t, "Artisan Store Doceria", storeName)
+	assert.Equal(t, "auto", manualStatus)
+	assert.Equal(t, 15, ttlMinutes)
+	assert.True(t, autoHideStock)
+}
+
 func TestNewPool_InvalidURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -105,7 +131,7 @@ func TestPostgres_Integration(t *testing.T) {
 
 	require.NoError(t, pool.Ping(ctx))
 
-	// Aplica migrations (00001_init e 00002_users) e valida estrutura inicial.
+	// Aplica todas as migrations (00001_init, 00002_users, 00003_catalog) e valida estrutura e seeds.
 	require.NoError(t, db.MigrateUp(ctx, pool))
 
 	var value string
@@ -115,25 +141,46 @@ func TestPostgres_Integration(t *testing.T) {
 	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
 	assert.True(t, tableExists(t, ctx, pool, "users"))
 	assert.True(t, tableExists(t, ctx, pool, "refresh_tokens"))
+	assert.True(t, tableExists(t, ctx, pool, "store_settings"))
+	assert.True(t, tableExists(t, ctx, pool, "categories"))
+	assert.True(t, tableExists(t, ctx, pool, "products"))
+	assert.True(t, tableExists(t, ctx, pool, "product_variants"))
+	assertCatalogSeedSingleton(t, ctx, pool)
 
 	// Reaplicação idempotente.
 	require.NoError(t, db.MigrateUp(ctx, pool))
+	assertCatalogSeedSingleton(t, ctx, pool)
 
-	// Primeiro MigrateDown reverte apenas 00002_users.sql.
+	// Passo 1 MigrateDown: reverte apenas 00003_catalog.sql.
+	require.NoError(t, db.MigrateDown(ctx, pool))
+	assert.False(t, tableExists(t, ctx, pool, "product_variants"))
+	assert.False(t, tableExists(t, ctx, pool, "products"))
+	assert.False(t, tableExists(t, ctx, pool, "categories"))
+	assert.False(t, tableExists(t, ctx, pool, "store_settings"))
+	assert.True(t, tableExists(t, ctx, pool, "refresh_tokens"))
+	assert.True(t, tableExists(t, ctx, pool, "users"))
+	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
+
+	// Passo 2 MigrateDown: reverte apenas 00002_users.sql.
 	require.NoError(t, db.MigrateDown(ctx, pool))
 	assert.False(t, tableExists(t, ctx, pool, "refresh_tokens"))
 	assert.False(t, tableExists(t, ctx, pool, "users"))
 	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
 
-	// Segundo MigrateDown reverte 00001_init.sql.
+	// Passo 3 MigrateDown: reverte 00001_init.sql.
 	require.NoError(t, db.MigrateDown(ctx, pool))
 	assert.False(t, tableExists(t, ctx, pool, "system_metadata"))
 
-	// Sobe novamente para garantir reversibilidade completa de todas as migrations.
+	// Sobe novamente para garantir reversibilidade completa de todas as migrations e restauração do seed.
 	require.NoError(t, db.MigrateUp(ctx, pool))
 	assert.True(t, tableExists(t, ctx, pool, "system_metadata"))
 	assert.True(t, tableExists(t, ctx, pool, "users"))
 	assert.True(t, tableExists(t, ctx, pool, "refresh_tokens"))
+	assert.True(t, tableExists(t, ctx, pool, "store_settings"))
+	assert.True(t, tableExists(t, ctx, pool, "categories"))
+	assert.True(t, tableExists(t, ctx, pool, "products"))
+	assert.True(t, tableExists(t, ctx, pool, "product_variants"))
+	assertCatalogSeedSingleton(t, ctx, pool)
 
 	// Pool fechado deve falhar nas operações de migration.
 	pool.Close()
